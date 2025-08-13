@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Super Kitty: Taco Comet Rush</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: radial-gradient(1200px 800px at 50% 50%, #0b1020 0%, #060913 60%, #05060d 100%);
+    color: #fff;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    overflow: hidden;
+  }
+  .wrap {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    height: 100%;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    gap: 10px;
+    background: rgba(255,255,255,0.04);
+    backdrop-filter: blur(4px);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  header .stats {
+    display: flex;
+    gap: 14px;
+    font-weight: 600;
+  }
+  header .btns {
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    border: 0;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.12);
+    color: white;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:hover { background: rgba(255,255,255,0.18); }
+  #game {
+    display: block;
+    width: min(100vw, 900px);
+    height: calc(min(100vw, 900px) * 0.6);
+    max-height: calc(100vh - 70px);
+    margin: 12px auto;
+    border-radius: 16px;
+    background: #02040a;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.45), inset 0 0 60px rgba(90,120,255,0.12);
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(3,6,16,0.6);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .25s ease;
+  }
+  .overlay.show { opacity: 1; pointer-events: auto; }
+  .panel {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 24px 22px;
+    border-radius: 16px;
+    text-align: center;
+    max-width: 540px;
+  }
+  .panel h1 { margin: 0 0 6px; font-size: 26px; }
+  .panel p { margin: 6px 0 16px; opacity: .9; }
+  .controls {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    display: grid;
+    grid-template-columns: 60px 60px 60px;
+    grid-template-rows: 60px 60px 60px;
+    gap: 6px;
+    opacity: .85;
+    user-select: none;
+  }
+  .controls button {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.16);
+    width: 60px; height: 60px;
+    border-radius: 14px;
+    font-size: 20px;
+  }
+  .controls .empty { background: transparent; border: 0; pointer-events: none; }
+  @media (min-width: 900px) {
+    .controls { display: none; }
+  }
+  .hint { font-size: 12px; opacity: .8; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="stats">
+        <div>Score: <span id="score">0</span></div>
+        <div>Time: <span id="time">30.0</span>s</div>
+      </div>
+      <div class="btns">
+        <button id="playBtn">Play</button>
+        <button id="restartBtn">Restart</button>
+      </div>
+    </header>
+    <canvas id="game" width="900" height="540" aria-label="Space where kitty chases tacos"></canvas>
+  </div>
+
+  <div id="overlay" class="overlay">
+    <div class="panel">
+      <h1>🐱✨ Super Kitty: Taco Comet Rush</h1>
+      <p>Help our space kitty gobble as many 🌮 as possible before time runs out!</p>
+      <p class="hint">Move with <b>WASD</b> or <b>Arrow keys</b>. On mobile, use the pad. Grab tacos, avoid missing too many—they drift away fast!</p>
+      <div>
+        <button id="bigPlay">Start Game</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="touchControls" aria-label="Touch controls">
+    <button class="empty"></button>
+    <button data-dir="up">▲</button>
+    <button class="empty"></button>
+    <button data-dir="left">◀</button>
+    <button data-dir="down">▼</button>
+    <button data-dir="right">▶</button>
+    <button class="empty"></button>
+    <button data-dir="boost">⚡</button>
+    <button class="empty"></button>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const scoreEl = document.getElementById('score');
+  const timeEl = document.getElementById('time');
+  const overlay = document.getElementById('overlay');
+  const playBtn = document.getElementById('playBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const bigPlay = document.getElementById('bigPlay');
+
+  // Game state
+  let state = 'idle'; // 'idle' | 'playing' | 'ended'
+  let keys = {};
+  let score = 0;
+  let timeLeft = 30.0;
+  let lastTime = 0;
+  let tacos = [];
+  let stars = [];
+  let kitty;
+  let tacoSpawnAcc = 0;
+
+  // Sounds (simple beeps)
+  const beep = (freq = 600, dur = 0.05, type = 'sine', vol = 0.07) => {
+    try {
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = actx.createOscillator();
+      const g = actx.createGain();
+      o.type = type;
+      o.frequency.value = freq;
+      g.gain.value = vol;
+      o.connect(g).connect(actx.destination);
+      o.start();
+      setTimeout(() => { o.stop(); actx.close(); }, dur * 1000);
+    } catch {}
+  };
+
+  // Entities
+  const makeKitty = () => ({
+    x: W * 0.5,
+    y: H * 0.5,
+    r: 20,
+    vx: 0,
+    vy: 0,
+    maxSpeed: 250,
+    accel: 900,
+    friction: 0.9,
+    boost: 0,
+  });
+
+  const makeTaco = () => {
+    // Spawn near edges drifting inward
+    const edge = Math.floor(Math.random()*4);
+    let x = 0, y = 0, vx = 0, vy = 0;
+    if (edge === 0) { x = Math.random()*W; y = -20; vx = (Math.random()-0.5)*60; vy = 40+Math.random()*80; }
+    if (edge === 1) { x = Math.random()*W; y = H+20; vx = (Math.random()-0.5)*60; vy = - (40+Math.random()*80); }
+    if (edge === 2) { x = -20; y = Math.random()*H; vx = 40+Math.random()*80; vy = (Math.random()-0.5)*60; }
+    if (edge === 3) { x = W+20; y = Math.random()*H; vx = - (40+Math.random()*80); vy = (Math.random()-0.5)*60; }
+
+    return { x, y, vx, vy, r: 16, rot: Math.random()*Math.PI, life: 10 };
+  };
+
+  const makeStar = () => {
+    const z = Math.random();
+    return {
+      x: Math.random()*W,
+      y: Math.random()*H,
+      r: 0.5 + z*1.5,
+      tw: Math.random()*Math.PI*2,
+      sp: 10 + z*50
+    };
+  };
+
+  const reset = () => {
+    score = 0;
+    timeLeft = 30.0;
+    tacos = [];
+    stars = Array.from({length: 130}, makeStar);
+    kitty = makeKitty();
+    tacoSpawnAcc = 0;
+    lastTime = performance.now();
+    scoreEl.textContent = score;
+    timeEl.textContent = timeLeft.toFixed(1);
+  };
+
+  // Drawing helpers
+  const drawBackground = (dt) => {
+    // space gradient handled by CSS; add parallax stars
+    stars.forEach(s => {
+      s.y += s.sp * dt * 0.2;
+      if (s.y > H) s.y = -2, s.x = Math.random()*W;
+      s.tw += dt * 3;
+      const alpha = 0.4 + 0.6*Math.abs(Math.sin(s.tw));
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.fill();
+    });
+  };
+
+  const drawKitty = (k, dt) => {
+    // Simple emoji kitty with a shimmer shield to feel "super"
+    ctx.save();
+    ctx.translate(k.x, k.y);
+
+    // Shield
+    const pulse = 0.6 + 0.4 * Math.abs(Math.sin(performance.now()/300));
+    ctx.beginPath();
+    ctx.arc(0, 0, k.r + 6, 0, Math.PI*2);
+    ctx.strokeStyle = `rgba(120,180,255,${0.25 + pulse*0.25})`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.font = `${k.r*1.8}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🐱', 0, 0);
+    ctx.restore();
+  };
+
+  const drawTaco = (t) => {
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.rot);
+    ctx.font = `${t.r*2}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🌮', 0, 0);
+    ctx.restore();
+  };
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  // Input
+  const setKey = (e, down) => {
+    const k = e.key.toLowerCase();
+    if (['arrowup','w'].includes(k)) keys.up = down;
+    if (['arrowdown','s'].includes(k)) keys.down = down;
+    if (['arrowleft','a'].includes(k)) keys.left = down;
+    if (['arrowright','d'].includes(k)) keys.right = down;
+    if (k === ' ') keys.boost = down;
+    if (down && k === 'r') startGame();
+    if (down) e.preventDefault();
+  };
+  window.addEventListener('keydown', e => setKey(e, true), {passive:false});
+  window.addEventListener('keyup', e => setKey(e, false), {passive:false});
+
+  // Touch controls
+  const tpad = document.getElementById('touchControls');
+  tpad.addEventListener('touchstart', e => {
+    const btn = e.target.closest('button[data-dir]');
+    if (btn) {
+      const dir = btn.getAttribute('data-dir');
+      keys[dir === 'boost' ? 'boost' : dir] = true;
+    }
+  }, {passive:true});
+  tpad.addEventListener('touchend', e => {
+    const btns = tpad.querySelectorAll('button[data-dir]');
+    btns.forEach(b => { keys[b.getAttribute('data-dir')] = false; });
+  }, {passive:true});
+
+  // Game loop
+  const update = (dt) => {
+    // Timer
+    if (state === 'playing') {
+      timeLeft = Math.max(0, timeLeft - dt);
+      timeEl.textContent = timeLeft.toFixed(1);
+      if (timeLeft <= 0) {
+        endGame();
+        return;
+      }
+    }
+
+    // Spawn tacos
+    tacoSpawnAcc += dt;
+    const spawnEvery = clamp(1.0 - Math.min(0.7, (30 - timeLeft) * 0.02), 0.35, 1.0); // faster spawns as time passes
+    if (tacoSpawnAcc >= spawnEvery) {
+      tacoSpawnAcc = 0;
+      tacos.push(makeTaco());
+    }
+
+    // Move kitty
+    let ax = 0, ay = 0;
+    if (keys.left) ax -= 1;
+    if (keys.right) ax += 1;
+    if (keys.up) ay -= 1;
+    if (keys.down) ay += 1;
+    const len = Math.hypot(ax, ay) || 1;
+    ax /= len; ay /= len;
+
+    const boostMult = keys.boost ? 1.8 : 1.0;
+    kitty.vx += ax * kitty.accel * dt;
+    kitty.vy += ay * kitty.accel * dt;
+
+    // Friction
+    kitty.vx *= kitty.friction;
+    kitty.vy *= kitty.friction;
+
+    const maxV = kitty.maxSpeed * boostMult;
+    const sp = Math.hypot(kitty.vx, kitty.vy);
+    if (sp > maxV) {
+      kitty.vx = kitty.vx / sp * maxV;
+      kitty.vy = kitty.vy / sp * maxV;
+    }
+
+    kitty.x += kitty.vx * dt;
+    kitty.y += kitty.vy * dt;
+
+    // Bounds
+    kitty.x = clamp(kitty.x, kitty.r+4, W - kitty.r - 4);
+    kitty.y = clamp(kitty.y, kitty.r+4, H - kitty.r - 4);
+
+    // Move tacos
+    tacos.forEach(t => {
+      t.x += t.vx * dt;
+      t.y += t.vy * dt;
+      t.rot += (t.vx + t.vy) * 0.0015;
+      t.life -= dt;
+    });
+    // Remove off-screen/expired tacos
+    tacos = tacos.filter(t => t.x>-40 && t.x<W+40 && t.y>-40 && t.y<H+40 && t.life>0);
+
+    // Collisions
+    for (let i = tacos.length - 1; i >= 0; i--) {
+      const t = tacos[i];
+      const d = Math.hypot(t.x - kitty.x, t.y - kitty.y);
+      if (d < kitty.r + t.r) {
+        tacos.splice(i, 1);
+        score += 1;
+        scoreEl.textContent = score;
+        beep(880, 0.06, 'square');
+      }
+    }
+  };
+
+  const draw = (dt) => {
+    // Clear
+    ctx.clearRect(0,0,W,H);
+
+    drawBackground(dt);
+
+    // Border
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(6,6,W-12,H-12);
+
+    // Draw tacos
+    tacos.forEach(drawTaco);
+
+    // Draw kitty
+    drawKitty(kitty, dt);
+
+    // HUD glow
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#6fb6ff';
+    ctx.beginPath();
+    ctx.arc(kitty.x, kitty.y, 80, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  const loop = (t) => {
+    const now = t || performance.now();
+    const dt = Math.min(0.033, (now - lastTime) / 1000);
+    lastTime = now;
+
+    if (state === 'playing') {
+      update(dt);
+    }
+    draw(dt);
+
+    requestAnimationFrame(loop);
+  };
+
+  const startGame = () => {
+    reset();
+    state = 'playing';
+    overlay.classList.remove('show');
+    beep(500, 0.08, 'triangle');
+  };
+
+  const endGame = () => {
+    state = 'ended';
+    overlay.classList.add('show');
+    overlay.querySelector('h1').innerText = `🐱✨ Time! Score: ${score}`;
+    overlay.querySelector('p').innerText = `You munched ${score} ${score === 1 ? 'taco' : 'tacos'} in 30 seconds.`;
+    beep(220, 0.12, 'sawtooth');
+  };
+
+  // Buttons
+  playBtn.addEventListener('click', () => { if (state !== 'playing') startGame(); });
+  restartBtn.addEventListener('click', startGame);
+  bigPlay.addEventListener('click', startGame);
+
+  // Start idle
+  reset();
+  overlay.classList.add('show');
+  requestAnimationFrame(loop);
+
+  // Accessibility: prevent arrow keys from scrolling
+  window.addEventListener('keydown', function(e) {
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) {
+      e.preventDefault();
+    }
+  }, {passive:false});
+})();
+</script>
+</body>
+</html>
